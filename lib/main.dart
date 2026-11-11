@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
@@ -7,115 +9,336 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+    return const MaterialApp(
+      title: 'Pomodoro Timer',
+      debugShowCheckedModeBanner: false,
+      home: PomodoroPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class PomodoroPage extends StatefulWidget {
+  const PomodoroPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<PomodoroPage> createState() => _PomodoroPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _PomodoroPageState extends State<PomodoroPage> {
+  // settings (in minutes)
+  int focusMin = 25;
+  int shortMin = 5;
+  int longMin = 15;
+  int totalRounds = 8;
+  int longEvery = 4;
 
-  void _incrementCounter() {
+  // phase: 0 = focus, 1 = short break, 2 = long break
+  int phase = 0;
+  int round = 1;
+  int remaining = 25 * 60;
+  bool running = false;
+  bool finished = false;
+  Timer? timer;
+
+  // how many seconds the current phase has
+  int getSeconds() {
+    if (phase == 0) return focusMin * 60;
+    if (phase == 1) return shortMin * 60;
+    return longMin * 60;
+  }
+
+  // go to the next session
+  void nextSession() {
+    if (phase == 0) {
+      if (round >= totalRounds) {
+        // all rounds done
+        finished = true;
+        running = false;
+        timer?.cancel();
+        remaining = 0;
+        return;
+      }
+      if (round % longEvery == 0) {
+        phase = 2;
+      } else {
+        phase = 1;
+      }
+    } else {
+      round++;
+      phase = 0;
+    }
+    remaining = getSeconds();
+  }
+
+  // play beep sound 3 times
+  void playSound() async {
+    for (int i = 0; i < 3; i++) {
+      SystemSound.play(SystemSoundType.alert);
+      await Future.delayed(const Duration(milliseconds: 350));
+    }
+  }
+
+  void start() {
+    if (running || finished) return;
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      running = true;
     });
+    timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      setState(() {
+        remaining--;
+        if (remaining <= 0) {
+          nextSession();
+          playSound();
+        }
+      });
+    });
+  }
+
+  void pause() {
+    timer?.cancel();
+    setState(() {
+      running = false;
+    });
+  }
+
+  void reset() {
+    timer?.cancel();
+    setState(() {
+      running = false;
+      finished = false;
+      phase = 0;
+      round = 1;
+      remaining = getSeconds();
+    });
+  }
+
+  void skip() {
+    setState(() {
+      nextSession();
+    });
+  }
+
+  void openSettings() async {
+    final result = await Navigator.push<List<int>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SettingsPage(
+          focus: focusMin,
+          shortBreak: shortMin,
+          longBreak: longMin,
+          rounds: totalRounds,
+          every: longEvery,
+        ),
+      ),
+    );
+    if (result == null) return;
+    focusMin = result[0];
+    shortMin = result[1];
+    longMin = result[2];
+    totalRounds = result[3];
+    longEvery = result[4];
+    reset();
+  }
+
+  String formatTime(int seconds) {
+    String m = (seconds ~/ 60).toString().padLeft(2, '0');
+    String s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  String getTitle() {
+    if (finished) return 'All rounds completed!';
+    if (phase == 0) return 'Focus Time';
+    if (phase == 1) return 'Short Break';
+    return 'Long Break';
+  }
+
+  Color getColor() {
+    if (finished) return Colors.grey.shade300;
+    if (phase == 0) return Colors.blue.shade100;
+    if (phase == 1) return Colors.green.shade100;
+    return Colors.purple.shade100;
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    // estimated time when this session ends
+    final end = DateTime.now().add(Duration(seconds: remaining));
+    final endText = TimeOfDay.fromDateTime(end).format(context);
+
     return Scaffold(
+      backgroundColor: getColor(),
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Pomodoro Timer'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: openSettings,
+          ),
+        ],
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('You have pushed the button this many times:'),
+            Text(getTitle(), style: const TextStyle(fontSize: 24)),
+            const SizedBox(height: 10),
+            Text('Round $round of $totalRounds'),
+            const SizedBox(height: 20),
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              formatTime(remaining),
+              style: const TextStyle(fontSize: 70, fontWeight: FontWeight.bold),
+            ),
+            if (!finished)
+              Text(
+                'Estimated finish: $endText',
+                style: const TextStyle(fontSize: 12),
+              ),
+            const SizedBox(height: 30),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: finished ? null : (running ? pause : start),
+                  child: Text(running ? 'Pause' : 'Start'),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: finished ? null : skip,
+                  child: const Text('Next'),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton(
+                  onPressed: reset,
+                  child: const Text('Reset'),
+                ),
+              ],
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+    );
+  }
+}
+
+class SettingsPage extends StatefulWidget {
+  final int focus;
+  final int shortBreak;
+  final int longBreak;
+  final int rounds;
+  final int every;
+
+  const SettingsPage({
+    super.key,
+    required this.focus,
+    required this.shortBreak,
+    required this.longBreak,
+    required this.rounds,
+    required this.every,
+  });
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late int focus;
+  late int shortBreak;
+  late int longBreak;
+  late int rounds;
+  late int every;
+
+  @override
+  void initState() {
+    super.initState();
+    focus = widget.focus;
+    shortBreak = widget.shortBreak;
+    longBreak = widget.longBreak;
+    rounds = widget.rounds;
+    every = widget.every;
+  }
+
+  // one row: label, minus button, number, plus button
+  Widget row(String label, int value, int min, int max, Function(int) change) {
+    return ListTile(
+      title: Text(label),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.remove),
+            onPressed: value > min ? () => change(value - 1) : null,
+          ),
+          Text('$value', style: const TextStyle(fontSize: 18)),
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: value < max ? () => change(value + 1) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('Presets'),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    focus = 25;
+                    shortBreak = 5;
+                    longBreak = 15;
+                  });
+                },
+                child: const Text('Standard 25/5/15'),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    focus = 50;
+                    shortBreak = 10;
+                    longBreak = 30;
+                  });
+                },
+                child: const Text('Long 50/10/30'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text('Or set your own time below (custom):'),
+          row('Focus (min)', focus, 1, 120, (v) => setState(() => focus = v)),
+          row('Short break (min)', shortBreak, 1, 60,
+              (v) => setState(() => shortBreak = v)),
+          row('Long break (min)', longBreak, 1, 120,
+              (v) => setState(() => longBreak = v)),
+          row('Total rounds', rounds, 1, 20, (v) => setState(() => rounds = v)),
+          row('Long break every N rounds', every, 1, 20,
+              (v) => setState(() => every = v)),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context, [focus, shortBreak, longBreak, rounds, every]);
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }
